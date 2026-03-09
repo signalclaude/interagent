@@ -35,10 +35,15 @@ const REGISTRY_FILE = path.join(DATA_DIR, "registry.json");
 const MESSAGES_DIR = path.join(DATA_DIR, "messages");
 const META_DIR = path.join(DATA_DIR, "messages-meta");
 const SPECS_DIR = path.join(DATA_DIR, "specs");
+const ARCHIVE_DIR = path.join(DATA_DIR, "archive");
+const ARCHIVE_MESSAGES_DIR = path.join(ARCHIVE_DIR, "messages");
+const ARCHIVE_META_DIR = path.join(ARCHIVE_DIR, "messages-meta");
 const STATUS_FILE = path.join(DATA_DIR, "status.json");
 
+const ARCHIVE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 async function ensureDirs(): Promise<void> {
-  for (const dir of [DATA_DIR, MESSAGES_DIR, META_DIR, SPECS_DIR]) {
+  for (const dir of [DATA_DIR, MESSAGES_DIR, META_DIR, SPECS_DIR, ARCHIVE_MESSAGES_DIR, ARCHIVE_META_DIR]) {
     await fs.mkdir(dir, { recursive: true });
   }
 }
@@ -139,6 +144,39 @@ export async function getMessagesForAgent(
     }
   }
   return messages;
+}
+
+// Archival
+
+export async function archiveOldMessages(): Promise<number> {
+  await ensureDirs();
+  const now = Date.now();
+  const files = await fs.readdir(META_DIR);
+  let archived = 0;
+
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    const metaPath = path.join(META_DIR, file);
+    const meta: MessageMeta = JSON.parse(await fs.readFile(metaPath, "utf-8"));
+
+    // Never archive pending messages
+    if (meta.status === "pending") continue;
+
+    const age = now - new Date(meta.updatedAt).getTime();
+    if (age < ARCHIVE_AGE_MS) continue;
+
+    // Move meta and content to archive
+    const id = meta.id;
+    const contentPath = path.join(MESSAGES_DIR, `${id}.md`);
+
+    await fs.rename(metaPath, path.join(ARCHIVE_META_DIR, file));
+    if (existsSync(contentPath)) {
+      await fs.rename(contentPath, path.join(ARCHIVE_MESSAGES_DIR, `${id}.md`));
+    }
+    archived++;
+  }
+
+  return archived;
 }
 
 // Signal files

@@ -20,6 +20,7 @@ import {
   getStatus,
   getAllStatuses,
   loadRegistry,
+  archiveOldMessages,
 } from "./storage.js";
 import type { MessageMeta } from "./storage.js";
 
@@ -144,12 +145,16 @@ server.tool(
     agent_name: z.string().describe("Your agent name"),
   },
   async ({ agent_name }) => {
+    // Sweep old messages to archive
+    const archived = await archiveOldMessages();
+
     const messages = await getMessagesForAgent(agent_name);
     const pending = messages.filter((m) => m.status === "pending");
     const unread = messages.filter((m) => m.status === "pending" || m.status === "acknowledged");
 
     if (unread.length === 0) {
-      return { content: [{ type: "text" as const, text: "No new messages." }] };
+      const archiveNote = archived > 0 ? ` (${archived} old message(s) archived)` : "";
+      return { content: [{ type: "text" as const, text: `No new messages.${archiveNote}` }] };
     }
 
     const lines = unread.map(
@@ -157,11 +162,13 @@ server.tool(
         `- [${m.status.toUpperCase()}] **${m.subject}** (from: ${m.from}, id: ${m.id})\n  Sent: ${m.createdAt}`
     );
 
+    const archiveNote = archived > 0 ? `\n\n_${archived} old message(s) archived._` : "";
+
     return {
       content: [
         {
           type: "text" as const,
-          text: `You have ${unread.length} message(s) (${pending.length} unread):\n\n${lines.join("\n\n")}\n\nUse read_message with the message ID to read the full content.`,
+          text: `You have ${unread.length} message(s) (${pending.length} unread):\n\n${lines.join("\n\n")}\n\nUse read_message with the message ID to read the full content.${archiveNote}`,
         },
       ],
     };
@@ -176,6 +183,9 @@ server.tool(
     reader: z.string().describe("Your agent name (for acknowledgment)"),
   },
   async ({ message_id, reader }) => {
+    // Sweep old messages to archive
+    await archiveOldMessages();
+
     const msg = await getMessage(message_id);
     if (!msg) {
       return { content: [{ type: "text" as const, text: `Message "${message_id}" not found.` }] };
